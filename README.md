@@ -5,7 +5,7 @@ Welcome to best-repo-ever — a practice repository to learn and apply the GitHu
 
 X Understand Git and GitHub basics
 
-Create and manage branches
+X Create and manage branches
 
 Track file changes and commit history
 
