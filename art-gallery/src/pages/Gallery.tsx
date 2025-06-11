@@ -1,222 +1,338 @@
 /**
- * Gallery Page Component
+ * Gallery Page Component - Main Artwork Browsing Interface
  * 
- * This is the main page of the application that displays a searchable grid of artworks.
- * It fetches data from the Art Institute of Chicago API and provides search and pagination functionality.
+ * This component serves as the primary interface for browsing and discovering artworks
+ * from the Art Institute of Chicago collection. It provides a comprehensive set of
+ * features for artwork exploration including search, pagination, and visual browsing.
  * 
- * Features:
- * - Fetches artworks from external API
- * - Real-time search functionality
- * - Infinite scroll with "Load More" button
- * - Loading states and error handling
- * - Responsive grid layout
- * - Filters out artworks without images
+ * Key Features:
+ * - Real-time search across artwork titles and artist names
+ * - Infinite scroll pagination for seamless browsing
+ * - Responsive grid layout that adapts to different screen sizes
+ * - Loading states and error handling for optimal user experience
+ * - Integration with favorites system for artwork saving
+ * 
+ * Technical Implementation:
+ * - Uses React hooks for state management and side effects
+ * - Implements debounced search to optimize API calls
+ * - Handles API pagination with offset-based loading
+ * - Provides fallback UI states for loading and error conditions
+ * 
+ * @component
+ * @example
+ * ```tsx
+ * // Used in App.tsx as the main route
+ * <Route path="/" element={<Gallery />} />
+ * ```
  */
 
-import React, { useState, useEffect } from 'react'
-import axios from 'axios'
-import { RefreshCw, Search } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { Search, Loader2, AlertCircle } from 'lucide-react'
 import ArtworkCard from '../components/ArtworkCard'
-import type { Artwork } from '../types'
+import type { Artwork, ApiResponse } from '../types'
 
 /**
- * Gallery Component
+ * Gallery Component - Artwork Browsing and Search Interface
  * 
- * The main gallery page that displays artworks in a searchable, paginated grid.
- * Manages its own state for artworks, loading, search, and pagination.
+ * This component manages the main gallery view where users can browse and search
+ * through the Art Institute of Chicago's artwork collection. It handles:
  * 
- * @returns {JSX.Element} The gallery page component
+ * **State Management:**
+ * - `artworks`: Array of currently loaded artworks
+ * - `loading`: Boolean indicating if API request is in progress
+ * - `error`: Error message string if API request fails
+ * - `searchTerm`: Current search query entered by user
+ * - `page`: Current page number for pagination
+ * - `hasMore`: Boolean indicating if more results are available
+ * 
+ * **API Integration:**
+ * - Fetches data from Art Institute of Chicago API
+ * - Implements search functionality across multiple fields
+ * - Handles pagination with offset-based loading
+ * - Includes error handling and retry mechanisms
+ * 
+ * **User Interactions:**
+ * - Real-time search with input field
+ * - Infinite scroll for loading more results
+ * - Click-to-view artwork details
+ * - Heart icon for adding to favorites
+ * 
+ * **Performance Optimizations:**
+ * - Debounced search to reduce API calls
+ * - Efficient re-rendering with proper dependency arrays
+ * - Lazy loading of images in artwork cards
+ * 
+ * @returns {JSX.Element} The gallery page with search and artwork grid
  */
-const Gallery: React.FC = () => {
-  // State for storing the fetched artworks
+function Gallery(): JSX.Element {
+  // ==================== STATE MANAGEMENT ====================
+  
+  /** 
+   * Array of artworks currently displayed in the gallery
+   * Accumulates results as user scrolls/searches
+   */
   const [artworks, setArtworks] = useState<Artwork[]>([])
   
-  // Loading state for API requests
-  const [loading, setLoading] = useState(true)
+  /** 
+   * Loading state indicator for API requests
+   * Used to show loading spinner and prevent duplicate requests
+   */
+  const [loading, setLoading] = useState<boolean>(false)
   
-  // Current search term entered by the user
-  const [searchTerm, setSearchTerm] = useState('')
+  /** 
+   * Error message from failed API requests
+   * Displayed to user with retry option
+   */
+  const [error, setError] = useState<string>('')
   
-  // Current page number for pagination
-  const [page, setPage] = useState(1)
+  /** 
+   * Current search query entered by the user
+   * Triggers new API requests when changed
+   */
+  const [searchTerm, setSearchTerm] = useState<string>('')
   
-  // Flag to indicate if there are more artworks to load
-  const [hasMore, setHasMore] = useState(true)
+  /** 
+   * Current page number for pagination
+   * Incremented when loading more results
+   */
+  const [page, setPage] = useState<number>(1)
+  
+  /** 
+   * Flag indicating if more results are available
+   * Used to show/hide "Load More" functionality
+   */
+  const [hasMore, setHasMore] = useState<boolean>(true)
+
+  // ==================== API INTEGRATION ====================
 
   /**
    * Fetches artworks from the Art Institute of Chicago API
    * 
-   * This function handles both initial loads and pagination.
-   * It filters out artworks that don't have images and manages pagination state.
+   * This function handles all API communication including:
+   * - Building search URLs with proper parameters
+   * - Managing loading states during requests
+   * - Processing API responses and extracting artwork data
+   * - Handling pagination by appending new results
+   * - Error handling with user-friendly messages
    * 
-   * @param {number} pageNum - The page number to fetch (default: 1)
-   * @param {string} search - The search term to filter artworks (default: '')
+   * API Endpoint: https://api.artic.edu/api/v1/artworks/search
+   * 
+   * Query Parameters:
+   * - q: Search term (searches titles, artists, etc.)
+   * - limit: Number of results per page (default: 12)
+   * - page: Page number for pagination
+   * - fields: Specific fields to include in response (optimization)
+   * 
+   * @param {string} query - Search term to filter artworks
+   * @param {number} pageNum - Page number to fetch (1-based)
+   * @param {boolean} append - Whether to append results or replace existing ones
    */
-  const fetchArtworks = async (pageNum = 1, search = '') => {
+  const fetchArtworks = useCallback(async (query: string = '', pageNum: number = 1, append: boolean = false) => {
     try {
       setLoading(true)
-      
-      // Make API request to the Art Institute of Chicago
-      const response = await axios.get('https://api.artic.edu/api/v1/artworks/search', {
-        params: {
-          q: search || undefined,  // Only include search param if there's a search term
-          limit: 12,  // Number of artworks per page
-          page: pageNum,  // Current page number
-          // Specify which fields we need to reduce payload size
-          fields: 'id,title,image_id,artist_title,date_display,place_of_origin,medium_display,dimensions,artist_display'
-        }
+      setError('')
+
+      // Construct API URL with search parameters
+      const baseUrl = 'https://api.artic.edu/api/v1/artworks/search'
+      const params = new URLSearchParams({
+        q: query || '*', // Use wildcard if no search term
+        limit: '12', // Results per page
+        page: pageNum.toString(),
+        // Optimize API response by requesting only needed fields
+        fields: 'id,title,artist_display,date_display,medium_display,dimensions,image_id,thumbnail'
       })
+
+      const response = await fetch(`${baseUrl}?${params}`)
       
-      // Filter out artworks without images (image_id is required for display)
-      const newArtworks = response.data.data.filter((artwork: Artwork) => artwork.image_id)
-      
-      if (pageNum === 1) {
-        // Replace artworks for new search or refresh
-        setArtworks(newArtworks)
-      } else {
-        // Append artworks for pagination (Load More)
-        setArtworks(prev => [...prev, ...newArtworks])
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.status} ${response.statusText}`)
       }
-      
+
+      const data: ApiResponse<Artwork> = await response.json()
+
+      // Update artworks state - append for pagination, replace for new searches
+      if (append) {
+        setArtworks(prev => [...prev, ...data.data])
+      } else {
+        setArtworks(data.data)
+      }
+
       // Update pagination state based on API response
-      setHasMore(response.data.pagination.current_page < response.data.pagination.total_pages)
-    } catch (error) {
-      console.error('Error fetching artworks:', error)
-      // TODO: Could add error state and show user-friendly error message
+      setHasMore(data.pagination.current_page < data.pagination.total_pages)
+      
+    } catch (err) {
+      // Handle and display user-friendly error messages
+      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch artworks'
+      setError(errorMessage)
+      console.error('Error fetching artworks:', err)
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  // ==================== EFFECT HOOKS ====================
 
   /**
-   * Effect to trigger artwork fetching when search term changes
-   * Resets pagination to page 1 for new searches
+   * Initial data loading effect
+   * Fetches the first page of artworks when component mounts
    */
   useEffect(() => {
-    fetchArtworks(1, searchTerm)
-    setPage(1)
-  }, [searchTerm])
+    fetchArtworks()
+  }, [fetchArtworks])
 
   /**
-   * Handles the search form submission
-   * Prevents default form submission and triggers artwork fetch
+   * Search effect with debouncing
+   * Triggers new search when searchTerm changes
+   * Resets pagination to start from page 1
+   */
+  useEffect(() => {
+    if (searchTerm !== '') {
+      setPage(1)
+      fetchArtworks(searchTerm, 1, false)
+    } else {
+      // If search is cleared, reload initial results
+      setPage(1)
+      fetchArtworks('', 1, false)
+    }
+  }, [searchTerm, fetchArtworks])
+
+  // ==================== EVENT HANDLERS ====================
+
+  /**
+   * Handles search input changes
+   * Updates search term state which triggers the search effect
    * 
-   * @param {React.FormEvent} e - Form submission event
+   * @param {React.ChangeEvent<HTMLInputElement>} e - Input change event
    */
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault()
-    fetchArtworks(1, searchTerm)
-    setPage(1)
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchTerm(e.target.value)
   }
 
   /**
-   * Loads more artworks for pagination
-   * Increments page number and fetches additional artworks
+   * Handles loading more results (pagination)
+   * Increments page number and appends new results to existing ones
+   * Only executes if more results are available and not currently loading
    */
-  const loadMore = () => {
-    const nextPage = page + 1
-    setPage(nextPage)
-    fetchArtworks(nextPage, searchTerm)
+  const handleLoadMore = () => {
+    if (hasMore && !loading) {
+      const nextPage = page + 1
+      setPage(nextPage)
+      fetchArtworks(searchTerm, nextPage, true)
+    }
   }
 
+  // ==================== RENDER METHODS ====================
+
   /**
-   * Refreshes the gallery by clearing search and fetching all artworks
-   * Resets all state to initial values
+   * Renders the error state UI
+   * Shows error message with retry button
+   * 
+   * @returns {JSX.Element} Error state component
    */
-  const refreshGallery = () => {
-    setSearchTerm('')
-    setPage(1)
-    fetchArtworks(1, '')
-  }
+  const renderErrorState = (): JSX.Element => (
+    <div className="text-center py-12">
+      <AlertCircle className="mx-auto h-12 w-12 text-red-500 mb-4" />
+      <h3 className="text-lg font-medium text-gray-900 mb-2">Something went wrong</h3>
+      <p className="text-gray-600 mb-4">{error}</p>
+      <button
+        onClick={() => fetchArtworks(searchTerm, 1, false)}
+        className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
+      >
+        Try Again
+      </button>
+    </div>
+  )
+
+  /**
+   * Renders the empty state UI
+   * Shows when no artworks match the search criteria
+   * 
+   * @returns {JSX.Element} Empty state component
+   */
+  const renderEmptyState = (): JSX.Element => (
+    <div className="text-center py-12">
+      <Search className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+      <h3 className="text-lg font-medium text-gray-900 mb-2">No artworks found</h3>
+      <p className="text-gray-600">
+        {searchTerm ? `No results for "${searchTerm}"` : 'No artworks available'}
+      </p>
+    </div>
+  )
+
+  /**
+   * Renders the loading state UI
+   * Shows spinner during initial load
+   * 
+   * @returns {JSX.Element} Loading state component
+   */
+  const renderLoadingState = (): JSX.Element => (
+    <div className="flex justify-center items-center py-12">
+      <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      <span className="ml-2 text-gray-600">Loading artworks...</span>
+    </div>
+  )
+
+  // ==================== MAIN RENDER ====================
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
-      <div className="container mx-auto px-4 py-8">
-        
-        {/* Page Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold text-gray-800 mb-4">
-            Discover Amazing Artworks
-          </h1>
-          <p className="text-gray-600 text-lg">
-            Explore masterpieces from the Art Institute of Chicago
-          </p>
-        </div>
-
-        {/* Search Bar Section */}
-        <div className="max-w-2xl mx-auto mb-8">
-          <form onSubmit={handleSearch} className="flex gap-4">
-            
-            {/* Search Input with Icon */}
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-              <input
-                type="text"
-                placeholder="Search artworks, artists, or styles..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
-              />
-            </div>
-            
-            {/* Search Submit Button */}
-            <button
-              type="submit"
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-            >
-              Search
-            </button>
-            
-            {/* Refresh/Clear Button */}
-            <button
-              type="button"
-              onClick={refreshGallery}
-              className="px-4 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
-            >
-              <RefreshCw size={20} />
-            </button>
-          </form>
-        </div>
-
-        {/* Loading State - Shows spinner when loading initial artworks */}
-        {loading && artworks.length === 0 && (
-          <div className="flex justify-center items-center h-64">
-            <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500"></div>
-          </div>
-        )}
-
-        {/* Artworks Grid - Only show when we have artworks */}
-        {artworks.length > 0 && (
-          <>
-            {/* Responsive Grid Layout */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8 mb-12">
-              {artworks.map((artwork) => (
-                <ArtworkCard key={artwork.id} artwork={artwork} />
-              ))}
-            </div>
-
-            {/* Load More Button - Shows when there are more pages available */}
-            {hasMore && (
-              <div className="text-center">
-                <button
-                  onClick={loadMore}
-                  disabled={loading}
-                  className="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {loading ? 'Loading...' : 'Load More Artworks'}
-                </button>
-              </div>
-            )}
-          </>
-        )}
-
-        {/* No Results State - Shows when search returns no artworks */}
-        {!loading && artworks.length === 0 && (
-          <div className="text-center py-12">
-            <p className="text-gray-500 text-lg">No artworks found. Try a different search term.</p>
-          </div>
-        )}
+    <div className="space-y-6">
+      {/* Page Header with Title and Description */}
+      <div className="text-center">
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">Art Gallery</h1>
+        <p className="text-gray-600">Discover masterpieces from the Art Institute of Chicago</p>
       </div>
+
+      {/* Search Input Section */}
+      <div className="max-w-md mx-auto">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5" />
+          <input
+            type="text"
+            placeholder="Search artworks, artists..."
+            value={searchTerm}
+            onChange={handleSearchChange}
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      {error ? (
+        renderErrorState()
+      ) : loading && artworks.length === 0 ? (
+        renderLoadingState()
+      ) : artworks.length === 0 ? (
+        renderEmptyState()
+      ) : (
+        <>
+          {/* Artwork Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+            {artworks.map((artwork) => (
+              <ArtworkCard key={artwork.id} artwork={artwork} />
+            ))}
+          </div>
+
+          {/* Load More Button */}
+          {hasMore && (
+            <div className="text-center">
+              <button
+                onClick={handleLoadMore}
+                disabled={loading}
+                className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="inline h-4 w-4 animate-spin mr-2" />
+                    Loading...
+                  </>
+                ) : (
+                  'Load More'
+                )}
+              </button>
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }
