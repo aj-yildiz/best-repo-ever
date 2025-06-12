@@ -73,20 +73,37 @@ function Gallery(): JSX.Element {
   const fetchArtworks = async (pageNum = 1, search = '') => {
     try {
       setLoading(true)
+      console.log('Fetching artworks...', { pageNum, search })
       
-      const baseUrl = 'https://api.artic.edu/api/v1/artworks/search'
+      // Use the simpler artworks endpoint first, then search if needed
+      let url = 'https://api.artic.edu/api/v1/artworks'
       const params = new URLSearchParams({
-        q: search || '*',
         limit: '12',
         page: pageNum.toString(),
         fields: 'id,title,artist_display,date_display,medium_display,dimensions,image_id'
       })
 
-      const response = await fetch(`${baseUrl}?${params}`)
+      // If there's a search term, use the search endpoint
+      if (search && search.trim()) {
+        url = 'https://api.artic.edu/api/v1/artworks/search'
+        params.set('q', search.trim())
+      }
+
+      const fullUrl = `${url}?${params.toString()}`
+      console.log('API URL:', fullUrl)
+
+      const response = await fetch(fullUrl)
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      
       const data = await response.json()
+      console.log('API Response:', data)
 
       // Filter artworks that have images
       const newArtworks = data.data.filter((artwork: Artwork) => artwork.image_id)
+      console.log('Filtered artworks with images:', newArtworks.length)
 
       if (pageNum === 1) {
         setArtworks(newArtworks)
@@ -97,14 +114,30 @@ function Gallery(): JSX.Element {
       setHasMore(data.pagination.current_page < data.pagination.total_pages)
     } catch (error) {
       console.error('Error fetching artworks:', error)
+      // Set some fallback data or show error message
+      if (pageNum === 1) {
+        setArtworks([])
+      }
     } finally {
       setLoading(false)
     }
   }
 
+  // Load initial artworks when component mounts
   useEffect(() => {
-    fetchArtworks(1, searchTerm)
-    setPage(1)
+    fetchArtworks(1, '')
+  }, [])
+
+  // Handle search term changes
+  useEffect(() => {
+    if (searchTerm !== '') {
+      fetchArtworks(1, searchTerm)
+      setPage(1)
+    } else {
+      // If search is cleared, reload initial artworks
+      fetchArtworks(1, '')
+      setPage(1)
+    }
   }, [searchTerm])
 
   const handleSearch = (e: React.FormEvent) => {
@@ -147,6 +180,11 @@ function Gallery(): JSX.Element {
             Search
           </button>
         </form>
+      </div>
+
+      {/* Debug Info */}
+      <div className="text-center text-sm text-gray-500">
+        Loading: {loading.toString()}, Artworks: {artworks.length}, Search: "{searchTerm}"
       </div>
 
       {/* Loading State */}
@@ -194,6 +232,12 @@ function Gallery(): JSX.Element {
           <p className="text-gray-500 text-lg">
             {searchTerm ? `No artworks found for "${searchTerm}"` : 'No artworks available'}
           </p>
+          <button
+            onClick={() => fetchArtworks(1, '')}
+            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Retry Loading Artworks
+          </button>
         </div>
       )}
     </div>
