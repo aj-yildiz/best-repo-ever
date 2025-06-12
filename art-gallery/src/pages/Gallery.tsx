@@ -73,7 +73,6 @@ function Gallery(): JSX.Element {
   const fetchArtworks = async (pageNum = 1, search = '') => {
     try {
       setLoading(true)
-      console.log('Fetching artworks...', { pageNum, search })
       
       // Use the simpler artworks endpoint first, then search if needed
       let url = 'https://api.artic.edu/api/v1/artworks'
@@ -90,7 +89,6 @@ function Gallery(): JSX.Element {
       }
 
       const fullUrl = `${url}?${params.toString()}`
-      console.log('API URL:', fullUrl)
 
       const response = await fetch(fullUrl)
       
@@ -99,11 +97,9 @@ function Gallery(): JSX.Element {
       }
       
       const data = await response.json()
-      console.log('API Response:', data)
 
       // Filter artworks that have images
       const newArtworks = data.data.filter((artwork: Artwork) => artwork.image_id)
-      console.log('Filtered artworks with images:', newArtworks.length)
 
       if (pageNum === 1) {
         setArtworks(newArtworks)
@@ -114,7 +110,6 @@ function Gallery(): JSX.Element {
       setHasMore(data.pagination.current_page < data.pagination.total_pages)
     } catch (error) {
       console.error('Error fetching artworks:', error)
-      // Set some fallback data or show error message
       if (pageNum === 1) {
         setArtworks([])
       }
@@ -180,11 +175,6 @@ function Gallery(): JSX.Element {
             Search
           </button>
         </form>
-      </div>
-
-      {/* Debug Info */}
-      <div className="text-center text-sm text-gray-500">
-        Loading: {loading.toString()}, Artworks: {artworks.length}, Search: "{searchTerm}"
       </div>
 
       {/* Loading State */}
